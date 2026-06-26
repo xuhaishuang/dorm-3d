@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🏠 我们的温馨宿舍</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #1a1025; font-family: 'Segoe UI', sans-serif; }
+#canvas { display: block; width: 100vw; height: 100vh; }
+
+.ui-overlay {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  z-index: 100; text-align: center; pointer-events: none;
+}
+.ui-overlay h1 {
+  font-size: 28px; color: #ffd6e0; text-shadow: 0 0 20px rgba(255,150,180,0.5);
+  letter-spacing: 4px; margin-bottom: 4px;
+}
+.ui-overlay p { font-size: 13px; color: rgba(255,214,224,0.6); }
+
+.controls {
+  position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+  z-index: 100; display: flex; gap: 12px;
+}
+.controls button {
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+  color: #ffd6e0; padding: 10px 20px; border-radius: 20px; cursor: pointer;
+  font-size: 14px; backdrop-filter: blur(10px); transition: all 0.3s;
+}
+.controls button:hover { background: rgba(255,150,180,0.3); border-color: rgba(255,150,180,0.5); }
+
+.name-label {
+  position: absolute; color: #fff; font-size: 13px; font-weight: bold;
+  text-shadow: 0 0 8px rgba(0,0,0,0.8); pointer-events: none; z-index: 50;
+  transform: translate(-50%, -100%); padding: 3px 10px; border-radius: 10px;
+  white-space: nowrap;
+}
+
+.info-panel {
+  position: fixed; top: 50%; right: 20px; transform: translateY(-50%);
+  z-index: 100; display: flex; flex-direction: column; gap: 8px;
+}
+.info-item {
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px; padding: 8px 14px; color: #fff; font-size: 12px;
+  backdrop-filter: blur(10px); cursor: pointer; transition: all 0.3s;
+}
+.info-item:hover { background: rgba(255,255,255,0.15); transform: scale(1.05); }
+.info-item .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+.loading {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: #1a1025; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; z-index: 999; transition: opacity 0.8s;
+}
+.loading h2 { color: #ffd6e0; font-size: 22px; margin-bottom: 16px; }
+.loading .bar { width: 200px; height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
+.loading .bar-inner { width: 0%; height: 100%; background: linear-gradient(90deg, #ff9ec4, #c9a0ff); border-radius: 2px; transition: width 0.3s; }
+</style>
+</head>
+<body>
+
+<div class="loading" id="loading">
+  <h2>🏠 正在布置宿舍...</h2>
+  <div class="bar"><div class="bar-inner" id="loadBar"></div></div>
+</div>
+
+<div class="ui-overlay">
+  <h1>🏠 我们的温馨宿舍</h1>
+  <p>拖拽旋转 · 滚轮缩放 · 点击日夜切换</p>
+</div>
+
+<div class="controls">
+  <button onclick="toggleDayNight()">🌙 日/夜切换</button>
+  <button onclick="resetCamera()">📷 复位视角</button>
+  <button onclick="togglePetals()">🌸 花瓣开关</button>
+</div>
+
+<div class="info-panel" id="infoPanel"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+// === 全局状态 ===
+let scene, camera, renderer, controls;
+let isNight = true, petalsOn = true;
+let mouse = new THREE.Vector2(0, 0);
+let characters = [];
+let petals = [];
+let starLights = [];
+let deskLamps = [];
+let roomGroup;
+let clock = new THREE.Clock();
+
+// === 宿舍6人数据 ===
+const dormData = [
+  { name: '婷婷', side: 'left', index: 0, color: 0x6bb7e0, colorHex: '#6bb7e0', deskItems: '课本+笔筒', bedItem: '小熊玩偶' },
+  { name: '双双', side: 'left', index: 1, color: 0xff9ec4, colorHex: '#ff9ec4', deskItems: '笔记本电脑+咖啡杯', bedItem: '猫咪抱枕' },
+  { name: '年年', side: 'left', index: 2, color: 0xffa07a, colorHex: '#ffa07a', deskItems: '平板+耳机', bedItem: '兔子玩偶' },
+  { name: '小雅', side: 'right', index: 0, color: 0x7ecba1, colorHex: '#7ecba1', deskItems: '平板+水杯', bedItem: '星星抱枕' },
+  { name: '妹儿', side: 'right', index: 1, color: 0xb088f9, colorHex: '#b088f9', deskItems: '化妆镜+耳机', bedItem: '兔子玩偶' },
+  { name: '云云', side: 'right', index: 2, color: 0xffe066, colorHex: '#ffe066', deskItems: '手机支架+零食', bedItem: '熊猫抱枕' },
+];
+
+// === 初始化 ===
+function init() {
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x1a1025, 0.015);
+
+  camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(12, 10, 14);
+  camera.lookAt(0, 1, 0);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  document.body.appendChild(renderer.domElement);
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.maxPolarAngle = Math.PI / 2.2;
+  controls.minDistance = 6;
+  controls.maxDistance = 25;
+  controls.target.set(0, 1, 0);
+
+  roomGroup = new THREE.Group();
+  scene.add(roomGroup);
+
+  buildRoom();
+  buildBeds();
+  buildCharacters();
+  buildDecorations();
+  setupLights();
+  buildPetals();
+  buildInfoPanel();
+
+  window.addEventListener('resize', onResize);
+  window.addEventListener('mousemove', onMouseMove);
+
+  updateLoadBar(100);
+  setTimeout(() => {
+    document.getElementById('loading').style.opacity = '0';
+    setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
+  }, 600);
+
+  animate();
+}
+
+function updateLoadBar(pct) {
+  document.getElementById('loadBar').style.width = pct + '%';
+}
+
+// === 构建房间 ===
+function buildRoom() {
+  // 地板
+  const floorGeo = new THREE.BoxGeometry(16, 0.15, 10);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.8 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.position.y = -0.075;
+  floor.receiveShadow = true;
+  roomGroup.add(floor);
+
+  // 木地板纹理线条
+  for (let i = -7; i <= 7; i += 0.8) {
+    const lineGeo = new THREE.BoxGeometry(0.02, 0.01, 10);
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0x2a1d12 });
+    const line = new THREE.Mesh(lineGeo, lineMat);
+    line.position.set(i, 0.005, 0);
+    roomGroup.add(line);
+  }
+
+  // 后墙
+  const wallGeo = new THREE.BoxGeometry(16, 6, 0.15);
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2d1f3d, roughness: 0.9 });
+  const backWall = new THREE.Mesh(wallGeo, wallMat);
+  backWall.position.set(0, 3, -5);
+  backWall.receiveShadow = true;
+  roomGroup.add(backWall);
+
+  // 左墙
+  const sideWallGeo = new THREE.BoxGeometry(0.15, 6, 10);
+  const leftWall = new THREE.Mesh(sideWallGeo, wallMat);
+  leftWall.position.set(-8, 3, 0);
+  roomGroup.add(leftWall);
+
+  // 右墙
+  const rightWall = new THREE.Mesh(sideWallGeo, wallMat);
+  rightWall.position.set(8, 3, 0);
+  roomGroup.add(rightWall);
+
+  // 窗户
+  const windowFrame = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.3 });
+  // 外框
+  const wfGeo = new THREE.BoxGeometry(4, 3, 0.2);
+  const wf = new THREE.Mesh(wfGeo, new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.3, roughness: 0.1, metalness: 0.5 }));
+  wf.position.set(0, 3.5, -4.9);
+  roomGroup.add(wf);
+  // 窗框十字
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(4, 0.08, 0.25), frameMat);
+  crossH.position.set(0, 3.5, -4.85);
+  roomGroup.add(crossH);
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.08, 3, 0.25), frameMat);
+  crossV.position.set(0, 3.5, -4.85);
+  roomGroup.add(crossV);
+
+  // 窗帘
+  const curtainMat = new THREE.MeshStandardMaterial({ color: 0xffd6e0, transparent: true, opacity: 0.6, side: THREE.DoubleSide, roughness: 0.9 });
+  const curtainL = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.5, 0.05), curtainMat);
+  curtainL.position.set(-1.2, 3.5, -4.7);
+  roomGroup.add(curtainL);
+  const curtainR = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.5, 0.05), curtainMat);
+  curtainR.position.set(1.2, 3.5, -4.7);
+  roomGroup.add(curtainR);
+}
+
+// === 构建上床下桌 ===
+function buildBeds() {
+  dormData.forEach(person => {
+    const group = new THREE.Group();
+    const x = person.side === 'left' ? -4 + person.index * 4 : 4 - person.index * 4;
+    const z = person.side === 'left' ? -2.5 : 2.5;
+    const facing = person.side === 'left' ? 1 : -1;
+
+    // 桌子
+    const deskMat = new THREE.MeshStandardMaterial({ color: 0x8B6F47, roughness: 0.6 });
+    // 桌面
+    const deskTop = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.1, 2), deskMat);
+    deskTop.position.set(0, 1.5, 0);
+    deskTop.castShadow = true;
+    deskTop.receiveShadow = true;
+    group.add(deskTop);
+    // 桌腿
+    [[-1.5, -0.9], [1.5, -0.9], [-1.5, 0.9], [1.5, 0.9]].forEach(([lx, lz]) => {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.5, 0.1), deskMat);
+      leg.position.set(lx, 0.75, lz);
+      group.add(leg);
+    });
+
+    // 书架隔层（桌面上方）
+    const shelfMat = new THREE.MeshStandardMaterial({ color: 0x9B7F57, roughness: 0.5 });
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.08, 2), shelfMat);
+    shelf.position.set(0, 2.8, 0);
+    group.add(shelf);
+    // 书架侧板
+    [-1.6, 0, 1.6].forEach(sx => {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.3, 2), shelfMat);
+      side.position.set(sx, 2.15, 0);
+      group.add(side);
+    });
+
+    // 桌面物品
+    buildDeskItems(group, person, facing);
+
+    // 床（上方）
+    const bedMat = new THREE.MeshStandardMaterial({ color: 0x7a5c3a, roughness: 0.7 });
+    // 床板
+    const bedBase = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.15, 2), bedMat);
+    bedBase.position.set(0, 3.5, 0);
+    bedBase.castShadow = true;
+    group.add(bedBase);
+    // 床垫
+    const mattressMat = new THREE.MeshStandardMaterial({ color: 0xfff0f5, roughness: 0.9 });
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(3, 0.2, 1.8), mattressMat);
+    mattress.position.set(0, 3.7, 0);
+    group.add(mattress);
+    // 枕头
+    const pillowMat = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.8 });
+    const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.2, 0.6), pillowMat);
+    pillow.position.set(facing * 0.8, 3.9, 0);
+    group.add(pillow);
+    // 被子
+    const blanketMat = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.85, transparent: true, opacity: 0.85 });
+    const blanket = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.15, 1.6), blanketMat);
+    blanket.position.set(-facing * 0.3, 3.85, 0);
+    group.add(blanket);
+
+    // 床上玩偶
+    buildBedPlushie(group, person, facing);
+
+    // 床头护栏
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.6, roughness: 0.3 });
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.5, 0.06), railMat);
+    rail.position.set(0, 4.1, facing * 1);
+    group.add(rail);
+
+    // 梯子
+    const ladderMat = new THREE.MeshStandardMaterial({ color: 0xa0a0a0, metalness: 0.5, roughness: 0.4 });
+    [-0.8, 0.8].forEach(lz => {
+      const lr = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2, 8), ladderMat);
+      lr.position.set(facing * 1.5, 2.5, lz);
+      group.add(lr);
+    });
+    [1.2, 1.8, 2.4, 3.0].forEach(ly => {
+      const step = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 8), ladderMat);
+      step.rotation.x = Math.PI / 2;
+      step.position.set(facing * 1.5, ly, 0);
+      group.add(step);
+    });
+
+    // 星星灯串（沿床沿）
+    buildStarLights(group, person, facing);
+
+    // 暖色台灯
+    buildDeskLamp(group, person, facing);
+
+    group.position.set(x, 0, z);
+    if (person.side === 'right') group.rotation.y = Math.PI;
+    roomGroup.add(group);
+  });
+}
+
+// === 桌面物品 ===
+function buildDeskItems(group, person, facing) {
+  const itemMat = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.5 });
+
+  switch (person.name) {
+    case '婷婷': {
+      // 课本
+      for (let i = 0; i < 3; i++) {
+        const book = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, 0.3), new THREE.MeshStandardMaterial({ color: [0x4a90d9, 0xd94a7a, 0x4ad9a7][i], roughness: 0.6 }));
+        book.position.set(-0.8 + i * 0.2, 2.55, facing * 0.6);
+        group.add(book);
+      }
+      // 笔筒
+      const penHolder = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.25, 8), itemMat);
+      penHolder.position.set(0.5, 1.7, facing * 0.5);
+      group.add(penHolder);
+      // 笔
+      for (let i = 0; i < 3; i++) {
+        const pen = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 6), new THREE.MeshStandardMaterial({ color: [0xff4444, 0x4444ff, 0x44ff44][i] }));
+        pen.position.set(0.5 + (i - 1) * 0.04, 1.88, facing * 0.5);
+        pen.rotation.z = (i - 1) * 0.15;
+        group.add(pen);
+      }
+      break;
+    }
+    case '双双': {
+      // 笔记本电脑
+      const laptopBase = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.04, 0.55), new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.3, metalness: 0.7 }));
+      laptopBase.position.set(0, 1.57, facing * 0.3);
+      group.add(laptopBase);
+      // 屏幕
+      const screen = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.5, 0.02), new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.1, metalness: 0.3, emissive: 0x331144, emissiveIntensity: 0.3 }));
+      screen.position.set(0, 1.83, facing * 0.58);
+      screen.rotation.x = -facing * 0.15;
+      group.add(screen);
+      // 咖啡杯
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.18, 12), new THREE.MeshStandardMaterial({ color: 0xfff5ee, roughness: 0.4 }));
+      cup.position.set(0.9, 1.64, facing * 0.5);
+      group.add(cup);
+      // 咖啡液面
+      const coffee = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.02, 12), new THREE.MeshStandardMaterial({ color: 0x3d1c02 }));
+      coffee.position.set(0.9, 1.72, facing * 0.5);
+      group.add(coffee);
+      break;
+    }
+    case '年年': {
+      // 平板
+      const tablet = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.03, 0.4), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.2, metalness: 0.5 }));
+      tablet.position.set(0, 1.57, facing * 0.3);
+      tablet.rotation.x = -facing * 0.2;
+      group.add(tablet);
+      const tabletScreen = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.02, 0.35), new THREE.MeshStandardMaterial({ color: 0x4488aa, emissive: 0x224466, emissiveIntensity: 0.4 }));
+      tabletScreen.position.set(0, 1.59, facing * 0.31);
+      tabletScreen.rotation.x = -facing * 0.2;
+      group.add(tabletScreen);
+      // 耳机
+      const earMat = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.4 });
+      const headband = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.02, 8, 16, Math.PI), earMat);
+      headband.position.set(0.8, 1.65, facing * 0.3);
+      headband.rotation.y = Math.PI / 2;
+      group.add(headband);
+      break;
+    }
+    case '小雅': {
+      // 平板
+      const tablet2 = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.03, 0.4), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.2, metalness: 0.5 }));
+      tablet2.position.set(0, 1.57, facing * 0.3);
+      tablet2.rotation.x = -facing * 0.2;
+      group.add(tablet2);
+      const tabletScreen2 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.02, 0.35), new THREE.MeshStandardMaterial({ color: 0x66aa88, emissive: 0x336644, emissiveIntensity: 0.4 }));
+      tabletScreen2.position.set(0, 1.59, facing * 0.31);
+      tabletScreen2.rotation.x = -facing * 0.2;
+      group.add(tabletScreen2);
+      // 水杯
+      const waterCup = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.22, 12), new THREE.MeshStandardMaterial({ color: 0x88ddaa, roughness: 0.3, transparent: true, opacity: 0.7 }));
+      waterCup.position.set(0.9, 1.66, facing * 0.5);
+      group.add(waterCup);
+      break;
+    }
+    case '妹儿': {
+      // 化妆镜
+      const mirrorStand = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, 0.3, 8), new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 }));
+      mirrorStand.position.set(0, 1.72, facing * 0.4);
+      group.add(mirrorStand);
+      const mirror = new THREE.Mesh(new THREE.CircleGeometry(0.2, 24), new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.95, roughness: 0.05 }));
+      mirror.position.set(0, 1.95, facing * 0.42);
+      group.add(mirror);
+      // 耳机
+      const earMat2 = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.4 });
+      const headband2 = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.02, 8, 16, Math.PI), earMat2);
+      headband2.position.set(-0.7, 1.65, facing * 0.3);
+      headband2.rotation.y = Math.PI / 2;
+      group.add(headband2);
+      break;
+    }
+    case '云云': {
+      // 手机支架
+      const stand = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.3, 0.1), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5, roughness: 0.3 }));
+      stand.position.set(0, 1.68, facing * 0.3);
+      group.add(stand);
+      const phone = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.22, 0.015), new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x553300, emissiveIntensity: 0.3 }));
+      phone.position.set(0, 1.87, facing * 0.35);
+      group.add(phone);
+      // 零食
+      const snack1 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.12, 0.15), new THREE.MeshStandardMaterial({ color: 0xff6b6b, roughness: 0.7 }));
+      snack1.position.set(0.7, 1.61, facing * 0.6);
+      group.add(snack1);
+      const snack2 = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.2, 10), new THREE.MeshStandardMaterial({ color: 0xffcc00, roughness: 0.6 }));
+      snack2.position.set(0.9, 1.65, facing * 0.4);
+      group.add(snack2);
+      break;
+    }
+  }
+}
+
+// === 床上玩偶 ===
+function buildBedPlushie(group, person, facing) {
+  const plushieMat = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.8 });
+  let plushie;
+
+  switch (person.bedItem) {
+    case '小熊玩偶':
+      plushie = new THREE.Group();
+      const bearBody = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), new THREE.MeshStandardMaterial({ color: 0x8B6F47, roughness: 0.8 }));
+      plushie.add(bearBody);
+      const bearHead = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 12), new THREE.MeshStandardMaterial({ color: 0x8B6F47, roughness: 0.8 }));
+      bearHead.position.y = 0.2;
+      plushie.add(bearHead);
+      // 小耳朵
+      const earG = new THREE.SphereGeometry(0.05, 8, 8);
+      const earMat = new THREE.MeshStandardMaterial({ color: 0x8B6F47 });
+      const ear1 = new THREE.Mesh(earG, earMat); ear1.position.set(-0.08, 0.3, 0); plushie.add(ear1);
+      const ear2 = new THREE.Mesh(earG, earMat); ear2.position.set(0.08, 0.3, 0); plushie.add(ear2);
+      break;
+    case '猫咪抱枕':
+      plushie = new THREE.Group();
+      const catBody = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffb6c1, roughness: 0.8 }));
+      plushie.add(catBody);
+      const catHead = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffb6c1, roughness: 0.8 }));
+      catHead.position.y = 0.18;
+      plushie.add(catHead);
+      // 猫耳
+      const catEarGeo = new THREE.ConeGeometry(0.04, 0.08, 4);
+      const catEarMat = new THREE.MeshStandardMaterial({ color: 0xffb6c1 });
+      const ce1 = new THREE.Mesh(catEarGeo, catEarMat); ce1.position.set(-0.06, 0.3, 0); plushie.add(ce1);
+      const ce2 = new THREE.Mesh(catEarGeo, catEarMat); ce2.position.set(0.06, 0.3, 0); plushie.add(ce2);
+      break;
+    case '兔子玩偶':
+      plushie = new THREE.Group();
+      const rabBody = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+      plushie.add(rabBody);
+      const rabHead = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+      rabHead.position.y = 0.17;
+      plushie.add(rabHead);
+      // 长耳朵
+      const rabEarGeo = new THREE.CapsuleGeometry(0.025, 0.12, 4, 8);
+      const rabEarMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const re1 = new THREE.Mesh(rabEarGeo, rabEarMat); re1.position.set(-0.04, 0.35, 0); plushie.add(re1);
+      const re2 = new THREE.Mesh(rabEarGeo, rabEarMat); re2.position.set(0.04, 0.35, 0); plushie.add(re2);
+      break;
+    case '星星抱枕':
+      plushie = new THREE.Group();
+      const starShape = new THREE.Mesh(new THREE.DodecahedronGeometry(0.15, 1), new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.7 }));
+      plushie.add(starShape);
+      break;
+    case '熊猫抱枕':
+      plushie = new THREE.Group();
+      const panBody = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+      plushie.add(panBody);
+      const panHead = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+      panHead.position.y = 0.2;
+      plushie.add(panHead);
+      // 黑眼圈
+      const patchGeo = new THREE.SphereGeometry(0.04, 8, 8);
+      const patchMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+      const p1 = new THREE.Mesh(patchGeo, patchMat); p1.position.set(-0.05, 0.22, 0.09); plushie.add(p1);
+      const p2 = new THREE.Mesh(patchGeo, patchMat); p2.position.set(0.05, 0.22, 0.09); plushie.add(p2);
+      // 黑耳朵
+      const panEarGeo = new THREE.SphereGeometry(0.04, 8, 8);
+      const panEarMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+      const pe1 = new THREE.Mesh(panEarGeo, panEarMat); pe1.position.set(-0.08, 0.3, 0); plushie.add(pe1);
+      const pe2 = new THREE.Mesh(panEarGeo, panEarMat); pe2.position.set(0.08, 0.3, 0); plushie.add(pe2);
+      break;
+    default:
+      plushie = new THREE.Group();
+      const defBody = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 12), plushieMat);
+      plushie.add(defBody);
+  }
+
+  plushie.position.set(facing * 0.3, 4.0, -0.3);
+  group.add(plushie);
+}
+
+// === 星星灯串 ===
+function buildStarLights(group, person, facing) {
+  const starGroup = new THREE.Group();
+  for (let i = 0; i < 8; i++) {
+    const x = -1.4 + i * 0.4;
+    const y = 4.2 + Math.sin(i * 0.8) * 0.15;
+    const starGeo = new THREE.OctahedronGeometry(0.04, 0);
+    const starMat = new THREE.MeshStandardMaterial({
+      color: person.color, emissive: person.color, emissiveIntensity: 0.8,
+      transparent: true, opacity: 0.9
+    });
+    const star = new THREE.Mesh(starGeo, starMat);
+    star.position.set(x, y, facing * 0.95);
+    star.userData = { baseY: y, phase: Math.random() * Math.PI * 2 };
+    starGroup.add(star);
+    starLights.push(star);
+  }
+  // 线
+  const curve = new THREE.CatmullRomCurve3(
+    Array.from({ length: 8 }, (_, i) => new THREE.Vector3(-1.4 + i * 0.4, 4.2 + Math.sin(i * 0.8) * 0.15, facing * 0.95))
+  );
+  const wireGeo = new THREE.TubeGeometry(curve, 20, 0.008, 4, false);
+  const wireMat = new THREE.MeshBasicMaterial({ color: 0x444444 });
+  const wire = new THREE.Mesh(wireGeo, wireMat);
+  starGroup.add(wire);
+
+  group.add(starGroup);
+}
+
+// === 台灯 ===
+function buildDeskLamp(group, person, facing) {
+  const lampGroup = new THREE.Group();
+  // 底座
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.05, 12), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.7, roughness: 0.3 }));
+  lampGroup.add(base);
+  // 杆
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.35, 8), new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.6 }));
+  pole.position.y = 0.2;
+  lampGroup.add(pole);
+  // 灯罩
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.12, 12, 1, true), new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.6, side: THREE.DoubleSide }));
+  shade.position.y = 0.4;
+  shade.rotation.x = Math.PI;
+  lampGroup.add(shade);
+  // 灯光
+  const light = new THREE.PointLight(0xffe4b5, 0.6, 3, 2);
+  light.position.y = 0.35;
+  light.castShadow = true;
+  lampGroup.add(light);
+  deskLamps.push(light);
+
+  lampGroup.position.set(-1.2, 1.55, facing * 0.7);
+  group.add(lampGroup);
+}
+
+// === 角色（Q版小人坐桌前） ===
+function buildCharacters() {
+  dormData.forEach(person => {
+    const x = person.side === 'left' ? -4 + person.index * 4 : 4 - person.index * 4;
+    const z = person.side === 'left' ? -1.2 : 1.2;
+    const facing = person.side === 'left' ? 1 : -1;
+
+    const charGroup = new THREE.Group();
+    const skinColor = 0xfdd9b5;
+    const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
+    const clothMat = new THREE.MeshStandardMaterial({ color: person.color, roughness: 0.6 });
+
+    // 身体
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.35, 12), clothMat);
+    body.position.y = 1.0;
+    charGroup.add(body);
+
+    // 头
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), skinMat);
+    head.position.y = 1.4;
+    charGroup.add(head);
+
+    // 头发
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 });
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.6), hairMat);
+    hair.position.y = 1.45;
+    charGroup.add(hair);
+
+    // 眼睛
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+    const eyeGeo = new THREE.SphereGeometry(0.03, 8, 8);
+    const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+    leftEye.position.set(-0.07, 1.42, facing * 0.18);
+    charGroup.add(leftEye);
+    const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+    rightEye.position.set(0.07, 1.42, facing * 0.18);
+    charGroup.add(rightEye);
+
+    // 腮红
+    const blushMat = new THREE.MeshStandardMaterial({ color: 0xff9999, transparent: true, opacity: 0.4 });
+    const blushGeo = new THREE.SphereGeometry(0.035, 8, 8);
+    const lb = new THREE.Mesh(blushGeo, blushMat);
+    lb.position.set(-0.12, 1.37, facing * 0.15);
+    charGroup.add(lb);
+    const rb = new THREE.Mesh(blushGeo, blushMat);
+    rb.position.set(0.12, 1.37, facing * 0.15);
+    charGroup.add(rb);
+
+    // 椅子
+    const chairMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5 });
+    const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.4), chairMat);
+    chairSeat.position.y = 0.65;
+    charGroup.add(chairSeat);
+    const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.05), chairMat);
+    chairBack.position.set(0, 1.0, -facing * 0.2);
+    charGroup.add(chairBack);
+
+    charGroup.userData = { name: person.name, headRef: head, leftEye, rightEye, facing };
+    charGroup.position.set(x, 0, z);
+    if (person.side === 'right') charGroup.rotation.y = Math.PI;
+
+    characters.push(charGroup);
+    roomGroup.add(charGroup);
+  });
+}
+
+// === 装饰物 ===
+function buildDecorations() {
+  // 门口鞋架区域
+  // 小地毯（走廊中间）
+  const rugMat = new THREE.MeshStandardMaterial({ color: 0xffd6e0, roughness: 0.9, transparent: true, opacity: 0.7 });
+  const rug = new THREE.Mesh(new THREE.BoxGeometry(2, 0.02, 4), rugMat);
+  rug.position.set(0, 0.01, 0);
+  roomGroup.add(rug);
+
+  // 墙上贴纸/装饰
+  const posterMat = new THREE.MeshStandardMaterial({ color: 0xff9ec4, roughness: 0.5 });
+  const poster = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.5, 0.02), posterMat);
+  poster.position.set(-3, 3, -4.9);
+  roomGroup.add(poster);
+  const poster2 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.5, 0.02), new THREE.MeshStandardMaterial({ color: 0xb088f9, roughness: 0.5 }));
+  poster2.position.set(3, 3, -4.9);
+  roomGroup.add(poster2);
+}
+
+// === 灯光 ===
+function setupLights() {
+  const ambient = new THREE.AmbientLight(0x2d1f3d, 0.3);
+  scene.add(ambient);
+
+  // 月光（窗外）
+  const moonLight = new THREE.DirectionalLight(0x8888cc, 0.4);
+  moonLight.position.set(0, 8, -5);
+  moonLight.castShadow = true;
+  moonLight.shadow.mapSize.width = 1024;
+  moonLight.shadow.mapSize.height = 1024;
+  scene.add(moonLight);
+
+  // 天花板灯
+  const ceilingLight = new THREE.PointLight(0xffe4b5, 0.5, 15, 2);
+  ceilingLight.position.set(0, 5.5, 0);
+  ceilingLight.castShadow = true;
+  scene.add(ceilingLight);
+}
+
+// === 花瓣粒子 ===
+function buildPetals() {
+  const petalGeo = new THREE.PlaneGeometry(0.06, 0.08);
+  for (let i = 0; i < 40; i++) {
+    const petalMat = new THREE.MeshStandardMaterial({
+      color: [0xffb6c1, 0xffc0cb, 0xffd6e0, 0xffe4e1][Math.floor(Math.random() * 4)],
+      side: THREE.DoubleSide, transparent: true, opacity: 0.7
+    });
+    const petal = new THREE.Mesh(petalGeo, petalMat);
+    petal.position.set(
+      (Math.random() - 0.5) * 14,
+      3 + Math.random() * 4,
+      (Math.random() - 0.5) * 8
+    );
+    petal.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    petal.userData = {
+      speedY: 0.003 + Math.random() * 0.005,
+      speedX: (Math.random() - 0.5) * 0.003,
+      rotSpeed: (Math.random() - 0.5) * 0.02,
+      phase: Math.random() * Math.PI * 2
+    };
+    petals.push(petal);
+    scene.add(petal);
+  }
+}
+
+// === 信息面板 ===
+function buildInfoPanel() {
+  const panel = document.getElementById('infoPanel');
+  dormData.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'info-item';
+    div.innerHTML = `<span class="dot" style="background:${p.colorHex}"></span>${p.name}`;
+    div.onclick = () => focusCharacter(p.name);
+    panel.appendChild(div);
+  });
+}
+
+function focusCharacter(name) {
+  const char = characters.find(c => c.userData.name === name);
+  if (char) {
+    const pos = char.position.clone();
+    controls.target.copy(pos);
+    camera.position.set(pos.x + 4, pos.y + 4, pos.z + 5);
+  }
+}
+
+// === 日夜切换 ===
+function toggleDayNight() {
+  isNight = !isNight;
+  if (isNight) {
+    scene.fog = new THREE.FogExp2(0x1a1025, 0.015);
+    renderer.toneMappingExposure = 1.0;
+    deskLamps.forEach(l => l.intensity = 0.6);
+  } else {
+    scene.fog = new THREE.FogExp2(0xfff0e6, 0.008);
+    renderer.toneMappingExposure = 1.8;
+    deskLamps.forEach(l => l.intensity = 0.15);
+  }
+}
+
+// === 花瓣开关 ===
+function togglePetals() {
+  petalsOn = !petalsOn;
+  petals.forEach(p => p.visible = petalsOn);
+}
+
+// === 复位 ===
+function resetCamera() {
+  camera.position.set(12, 10, 14);
+  controls.target.set(0, 1, 0);
+}
+
+// === 事件 ===
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function onMouseMove(e) {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+}
+
+// === 动画循环 ===
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  // 花瓣飘落
+  if (petalsOn) {
+    petals.forEach(p => {
+      p.position.y -= p.userData.speedY;
+      p.position.x += Math.sin(t + p.userData.phase) * 0.002 + p.userData.speedX;
+      p.rotation.x += p.userData.rotSpeed;
+      p.rotation.z += p.userData.rotSpeed * 0.5;
+      if (p.position.y < -0.5) {
+        p.position.y = 5 + Math.random() * 2;
+        p.position.x = (Math.random() - 0.5) * 14;
+      }
+    });
+  }
+
+  // 星星灯闪烁
+  starLights.forEach(s => {
+    const pulse = Math.sin(t * 2 + s.userData.phase) * 0.3 + 0.7;
+    s.material.emissiveIntensity = pulse;
+    s.scale.setScalar(0.8 + pulse * 0.3);
+  });
+
+  // 角色跟随鼠标
+  characters.forEach(char => {
+    const head = char.userData.headRef;
+    const facing = char.userData.facing;
+    const rotZ = mouse.x * 0.15;
+    const rotX = mouse.y * 0.1 * facing;
+    head.rotation.z = rotZ;
+    head.rotation.x = rotX;
+  });
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// === 启动 ===
+init();
+</script>
+</body>
+</html>
