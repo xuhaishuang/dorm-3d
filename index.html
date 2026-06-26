@@ -79,8 +79,8 @@ body { overflow: hidden; background: #1a1025; font-family: 'Segoe UI', sans-seri
 
 <div class="info-panel" id="infoPanel"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.157.0/examples/js/controls/OrbitControls.js"></script>
 
 <script>
 // === 全局状态 ===
@@ -472,7 +472,7 @@ function buildBedPlushie(group, person, facing) {
       rabHead.position.y = 0.17;
       plushie.add(rabHead);
       // 长耳朵
-      const rabEarGeo = new THREE.CapsuleGeometry(0.025, 0.12, 4, 8);
+      const rabEarGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.12, 8);
       const rabEarMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
       const re1 = new THREE.Mesh(rabEarGeo, rabEarMat); re1.position.set(-0.04, 0.35, 0); plushie.add(re1);
       const re2 = new THREE.Mesh(rabEarGeo, rabEarMat); re2.position.set(0.04, 0.35, 0); plushie.add(re2);
